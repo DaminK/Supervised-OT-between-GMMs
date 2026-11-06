@@ -1,0 +1,21 @@
+# Component-count check (appendix, GMM fitting) on the main run's GMMs and tuned weights.
+# Usage: --configfile config/paper/main_benchmark.yml config/ablation/_component_stability.yml
+#        -- patient_component_stability_only
+
+run_datasets: [COVID, kidney, breastcancer, myocardial_infarction]
+run_methods: [GMM_DiagBures, GMM_FullBures]
+
+patient_component_stability:
+  n_splits: 25
+  random_seed: 42
+  knn_k: 5
+  knn_weights: distance
+  n_permutations: 9999
+  n_bootstrap: 2000
+
+paper_exports:
+  manifest_root: "../data/generated_plots/_export_manifests/component_stability/"
+  aggregate_files: []
+  dataset_files: []
+  benchmark_plot_dirs: []
+  tune_files: []

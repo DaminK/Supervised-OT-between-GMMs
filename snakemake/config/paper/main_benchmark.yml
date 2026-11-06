@@ -1,0 +1,379 @@
+# Main benchmark of the paper.
+#
+# Produces Table 1, the per-dataset appendix tables, Figure 3 (Pareto plots), the
+# clustermaps and embeddings, the scaling, GMM-validation and tuning figures, and the
+# appendix tables on statistical comparisons, complete linkage, distance agreement and
+# runtime. The further analyses (config/paper/pilot_gmvae.yml, config/ablation/) reuse this run's
+# preprocessing, GMM fits and tuning: outputs are stored under hashes of their settings.
+#
+# Protocol:
+#   datasets     4 scRNA-seq cohorts + 2 synthetic datasets (datasets.yml)
+#   preprocess   normalize_total(1e4) -> log1p -> PCA(100); no HVG selection, no gene scaling
+#   GMMs         per-patient full-covariance GMMs, k in [5, 15] chosen by held-out NLL (no labels)
+#   evaluation   5 stratified train/test splits (80/20), seed 42
+#                KNN (k=5) on held-out patients; ARI of hierarchical clustering
+#                (average linkage); silhouette width on all patients, matching ARI
+#   tuning       2 splits; select by KNN, ties broken by ARI, then by the first grid point
+#   training     our methods: 30 epochs with early stopping (stop_thr 1e-6);
+#                GGML as in its paper: 30 epochs without early stopping
+#
+# All protocol settings are stated here rather than inherited from defaults.yml.
+#
+# Usage, from snakemake/:
+#   1. ../.venv/bin/snakemake --configfile config/paper/main_benchmark.yml -j8 -- generate_paper_results
+#   2. ../.venv/bin/snakemake --configfile config/paper/main_benchmark.yml \
+#        config/paper/pilot_gmvae.yml -j8 -- benchmark_only
+#   3. ../.venv/bin/snakemake --configfile config/paper/main_benchmark.yml -j8 -- scrna_baselines_table_only
+#   (2 and 3 build Table 2, whose GM-VAE rows come from 2.)
+
+datasets_file: "datasets.yml"
+
+use_rep: "X_pca"
+n_feats: 100
+random_seed: 42
+
+preprocess:
+  mode: "log1p_pca"
+
+from_anndata:
+  n_triplets: 3
+  n_cells: 250           # point-cloud support per patient (sampled from the fitted GMM)
+
+gmm:
+  k_comps: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  component_sharing: "sample_specific"
+  min_cells: 250
+  normalize: true
+  fit_gmm_kwargs:
+    covariance_type: "full"
+    train_size: 0.5
+    k_selection_metric: "heldout_nll"
+    max_iter: 100
+  output_scale: "none"
+
+train_test:
+  alpha: 1.0
+  reg: 0.001
+  reg_type: "fro"
+  n_comps: 5
+  knn_k: 5
+  max_iter: 30
+  n_splits: 5
+  train_size: 0.8
+  lr: 0.05
+  stop_thr: 1.0e-6
+  # The first linkage is reported as "ari" (main text), the others as "ari_<linkage>",
+  # all on the same trained metrics.
+  cluster_linkage: ["average", "complete"]
+  scoring: ["knn", "ari", "silhouette"]
+  verbose: false
+  plot_split: false
+  print_table: false
+  plot_iter: 0
+
+tune:
+  enabled: true
+  # Selection: KNN first, ARI breaks ties. Remaining ties go to the first grid point
+  # (ggml_ot tie_break "first", the default; setting tie_break changes the tune hash).
+  scoring: ["knn", "ari"]
+  alpha: [1]
+  reg: [0.0001, 0.001, 0.01, 0.1, 1, 10]
+  reg_type: ["fro"]
+  n_comps: [5]
+  knn_k: 5
+  max_iter: 30
+  n_splits: 2
+  lr: 0.05
+  cluster_linkage: "average"
+  verbose: false
+  plot_contour: false
+  mi_reg: [0]            # methods override (GMM_DiagBures tunes its own grid)
+  train_size: 0.8
+
+methods:
+  # ── Point clouds (N = from_anndata.n_cells samples per patient) ───────────
+  Empirical_euclidean:
+    dataset_type: empirical
+    representation_source: fitted_gmm
+    ground_metric: euclidean
+    display_name: "EMD ($L_2$)"
+    train_test: {}
+
+  Empirical_cosine:
+    dataset_type: empirical
+    representation_source: fitted_gmm
+    ground_metric: cosine
+    display_name: "EMD (Cosine)"
+    train_test: {}
+
+  Empirical_sinkhorn:
+    dataset_type: empirical
+    representation_source: fitted_gmm
+    ground_metric: euclidean
+    display_name: "Sinkhorn ($L_2$)"
+    train_test:
+      entropic_reg: 1.0
+
+  FDA:
+    dataset_type: empirical
+    representation_source: fitted_gmm
+    display_name: "FDA"
+    external: fda
+
+  WDA:
+    dataset_type: empirical
+    representation_source: fitted_gmm
+    display_name: "WDA"
+    external: wda
+
+  Empirical_GML:
+    dataset_type: empirical
+    representation_source: fitted_gmm
+    ground_metric: learned
+    tune_enabled: false
+    display_name: "GGML"
+    train_test:
+      alpha: 1.0
+      reg: 0.001
+      # GGML as in its paper (Kühn and Schaub): no early stopping, 30 epochs (max_iter).
+      # Our methods keep the global stop_thr.
+      stop_thr: null
+
+  # ── Weighted centroids (GMM component means + weights) ────────────────────
+  Centroid_euclidean:
+    dataset_type: centroid
+    representation_source: fitted_gmm
+    ground_metric: euclidean
+    display_name: "EMD ($L_2$)"
+    train_test: {}
+
+  Centroid_cosine:
+    dataset_type: centroid
+    representation_source: fitted_gmm
+    ground_metric: cosine
+    display_name: "EMD (Cosine)"
+    train_test: {}
+
+  # Annotated cell-type centroids (PILOT's representation). Not built on our GMMs, so
+  # it is left out of Table 1 and shown in the representation table (Table 2) only.
+  Centroid_raw_cosine:
+    dataset_type: centroid
+    representation_source: raw_dataset
+    ground_metric: cosine
+    display_name: "W Cosine (PILOT)"
+    train_test: {}
+    main_table: false
+
+  # Ablation of our method on the component means and weights only (no covariances).
+  GMM_means_only:
+    dataset_type: centroid
+    representation_source: fitted_gmm
+    ground_metric: learned
+    display_name: "Ours (Mean only)"
+
+  # Our metric on PILOT's representation (annotated cell-type centroids), for the
+  # representation table (Table 2) only, not in Table 1 or the per-dataset tables.
+  Celltype_means_only:
+    dataset_type: centroid
+    representation_source: raw_dataset
+    ground_metric: learned
+    display_name: "Ours (Mean only, cell types)"
+    main_table: false
+
+  # ── GMMs ──────────────────────────────────────────────────────────────────
+  GMM_KL_divergence:
+    dataset_type: gmm
+    ground_metric: kl_divergence
+    display_name: "KL-Divergence"
+    train_test: {}
+
+  GMM_euclidean:
+    dataset_type: gmm
+    ground_metric: euclidean
+    display_name: "Bures-Wasserstein"
+    train_test: {}
+
+  GMM_euclidean_diag:
+    dataset_type: gmm
+    ground_metric: euclidean
+    display_name: "Bures-Wasserstein (Diag.)"
+    train_test:
+      diag_bures_approx: true
+
+  GMM_FullBures:
+    dataset_type: gmm
+    ground_metric: learned
+    display_name: "Ours (Exact)"
+    train_test:
+      diag_bures_approx: false
+    tune:
+      diag_bures_approx: false
+
+  GMM_DiagBures:
+    dataset_type: gmm
+    ground_metric: learned
+    display_name: "Ours (Diag.)"
+    train_test:
+      diag_bures_approx: true
+    tune:
+      diag_bures_approx: true
+      mi_reg: [0.0001, 0.001, 0.01, 0.1, 1, 10]
+
+# Dataset labels shared by the paper tables.
+dataset_labels: &paper_dataset_labels
+  COVID: "COVID-19"
+  kidney: "Kidney Injury"
+  breastcancer: "Breast Cancer"
+  myocardial_infarction: "Myocardial Infarction"
+  synth_recovery2_jitter: "Synthetic (Mean+Cov)"
+  synth_recovery2_jitter_onlycov: "Synthetic (Cov only)"
+
+# Exact vs diagonal Bures patient distances (rules/distance_agreement.smk).
+distance_agreement:
+  exact_method: GMM_FullBures
+  diag_method: GMM_DiagBures
+  datasets: [COVID, kidney, breastcancer, myocardial_infarction, synth_recovery2_jitter, synth_recovery2_jitter_onlycov]
+  dataset_labels: *paper_dataset_labels
+
+# scRNA baselines table (Table 2; rules/scrna_baselines_table.smk): each scRNA-specific
+# baseline with its fixed ground metric on its own representation, next to our learned
+# metric on the same representation. `run: gmvae` rows read the results of the
+# config/paper/pilot_gmvae.yml overlay, so the table is built by the target
+# scrna_baselines_table_only after that overlay (usage steps 2 and 3 above).
+# Table 2 groups rows by `group` and labels each pair by `sublabel`, with the baseline name
+# above its `ground_metric`. The per-cohort appendix table labels rows by `representation`.
+scrna_baselines_table:
+  datasets: [COVID, kidney, breastcancer, myocardial_infarction]
+  dataset_labels:
+    COVID: "COVID-19"
+    kidney: "Kidney Injury"
+    breastcancer: "Breast Cancer"
+    myocardial_infarction: "Myocardial Infarction"
+  gmvae_overlay: "paper/pilot_gmvae.yml"
+  rows:
+    - baseline: {method: Centroid_raw_cosine, label: "PILOT"}
+      ours: {method: Celltype_means_only, label: "Ours (Mean only)"}
+      representation: "Cell-type centroids"
+      group: "Weighted Centroids"
+      sublabel: "Cell types"
+      ground_metric: "EMD (Cosine)"
+      run: main
+    - baseline: {method: Centroid_cosine, label: "QOT-Cosine"}
+      ours: {method: GMM_means_only, label: "Ours (Mean only)"}
+      representation: "GMM means, EM"
+      group: "Weighted Centroids"
+      sublabel: "GMM means"
+      ground_metric: "EMD (Cosine)"
+      run: main
+    - baseline: {method: GMM_euclidean, label: "QOT-Full"}
+      ours: {method: GMM_DiagBures, label: "Ours (Diag.)"}
+      representation: "GMMs, EM"
+      group: "GMMs"
+      sublabel: "EM"
+      ground_metric: "Bures-Wasserstein"
+      run: main
+    - baseline: {method: GMM_euclidean, label: "PILOT-GM-VAE"}
+      ours: {method: GMM_DiagBures, label: "Ours (Diag.)"}
+      representation: "GMMs, GM-VAE"
+      group: "GMMs"
+      sublabel: "GM-VAE"
+      ground_metric: "Bures-Wasserstein"
+      run: gmvae
+
+# Runtime table (appendix, tab:runtime; rules/runtime_table.smk), from the timing files of
+# this run's preprocess, GMM and benchmark jobs. End to end adds PCA, GMM fitting for GMM
+# methods, and training and evaluation. Tuning is not included. Target runtime_table_only.
+runtime_table:
+  datasets: [myocardial_infarction, kidney, COVID, breastcancer]
+  dataset_labels:
+    myocardial_infarction: "Myocardial Inf."
+    kidney: "Kidney Injury"
+    COVID: "COVID-19"
+    breastcancer: "Breast Cancer"
+  preprocess_label: "PCA (all methods)"
+  gmm_label: "GMM fitting (GMM methods)"
+  methods:
+    - {method: Empirical_GML, label: "GGML (point clouds)"}
+    - {method: GMM_FullBures, label: "Ours (Exact)"}
+    - {method: GMM_DiagBures, label: "Ours (Diag.)"}
+  caption: "Wall-clock time (h:mm) of the pipeline jobs of the main benchmark. Training and evaluation cover all five train-test splits."
+
+paper_exports:
+  enabled: true
+  # Copies the outputs used in the paper to data/generated_plots/ and data/generated_tables/,
+  # under the paths the paper uses.
+  label: "paper"
+  plots_root: "../data/generated_plots/"
+  tables_root: "../data/generated_tables/"
+  manifest_root: "../data/generated_plots/_export_manifests/"
+  aggregate_files:
+    - source: "pareto_plot_all.pdf"
+      dest: "pareto/pareto_plot.pdf"
+    - source: "pareto_plot_scRNA.pdf"
+      dest: "pareto/pareto_plot_scRNA.pdf"
+    - source: "pareto_plot_synth.pdf"
+      dest: "pareto/pareto_plot_synth.pdf"
+    - source: "train_time_vs_patients.pdf"
+      dest: "appendix/scaling/train_time_vs_patients.pdf"
+    - source: "train_time_vs_patients_log.pdf"
+      dest: "appendix/scaling/train_time_vs_patients_log.pdf"
+    - source: "ot_time_vs_patients.pdf"
+      dest: "appendix/scaling/ot_time_vs_patients.pdf"
+    - source: "ot_time_vs_patients_log.pdf"
+      dest: "appendix/scaling/ot_time_vs_patients_log.pdf"
+    - source: "time_vs_patients_panel.pdf"
+      dest: "appendix/scaling/time_vs_patients_panel.pdf"
+    - source: "time_vs_patients_panel_log.pdf"
+      dest: "appendix/scaling/time_vs_patients_panel_log.pdf"
+    - source: "gmm_holdout_nll_boxplot.pdf"
+      dest: "appendix/gmm_validation/gmm_holdout_nll_boxplot.pdf"
+    - source: "gmm_holdout_nll_summary.tex"
+      dest: "appendix/gmm_validation/gmm_holdout_nll_summary.tex"
+    - source: "benchmark_table_all.tex"
+      dest: "benchmark_table.tex"
+    - source: "benchmark_table_scRNA.tex"
+      dest: "appendix/benchmark_table_scRNA.tex"
+    - source: "benchmark_table_synth.tex"
+      dest: "appendix/benchmark_table_synth.tex"
+    - source: "paired_tests/paired_tests_all.tex"
+      dest: "appendix/paired_tests_all.tex"
+    - source: "complete_linkage_table.tex"
+      dest: "appendix/complete_linkage_table.tex"
+    - source: "datasets_table.tex"
+      dest: "datasets_table.tex"
+    - source: "distance_agreement/distance_agreement.tex"
+      dest: "distance_agreement.tex"
+    - source: "distance_agreement/distance_agreement_per_dataset.tex"
+      dest: "appendix/distance_agreement_per_dataset.tex"
+    - source: "runtime_table/runtime_table.tex"
+      dest: "appendix/runtime_table.tex"
+  dataset_files:
+    - source: "benchmark_table.tex"
+      dest_pattern: "appendix/benchmark_table_{dataset}.tex"
+  benchmark_plot_dirs:
+    - dest_pattern: "clustermaps/{dataset}/{method}"
+  tune_files:
+    - dataset: COVID
+      method: GMM_DiagBures
+      source: reg_vs_mi_reg/contour_reg_vs_mi_reg.pdf
+      dest: "appendix/tuning/COVID_reg_vs_mi_reg.pdf"
+    - dataset: breastcancer
+      method: GMM_DiagBures
+      source: reg_vs_mi_reg/contour_reg_vs_mi_reg.pdf
+      dest: "appendix/tuning/breastcancer_reg_vs_mi_reg.pdf"
+    - dataset: kidney
+      method: GMM_DiagBures
+      source: reg_vs_mi_reg/contour_reg_vs_mi_reg.pdf
+      dest: "appendix/tuning/kidney_reg_vs_mi_reg.pdf"
+    - dataset: myocardial_infarction
+      method: GMM_DiagBures
+      source: reg_vs_mi_reg/contour_reg_vs_mi_reg.pdf
+      dest: "appendix/tuning/myocardial_reg_vs_mi_reg.pdf"
+    - dataset: synth_recovery2_jitter
+      method: GMM_DiagBures
+      source: reg_vs_mi_reg/contour_reg_vs_mi_reg.pdf
+      dest: "appendix/tuning/synth_recovery2_jitter_reg_vs_mi_reg.pdf"
+    - dataset: synth_recovery2_jitter_onlycov
+      method: GMM_DiagBures
+      source: reg_vs_mi_reg/contour_reg_vs_mi_reg.pdf
+      dest: "appendix/tuning/synth_recovery2_jitter_onlycov_reg_vs_mi_reg.pdf"

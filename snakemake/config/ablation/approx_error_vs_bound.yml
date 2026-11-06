@@ -1,0 +1,183 @@
+# Regularization ablation of the diagonal Bures approximation (Figure 5 and its appendix results).
+#
+# Trains maps with no, Frobenius, MI and both regularizers on all datasets and records the
+# approximation error over training, per dataset and aggregated across datasets.
+#
+# Usage:
+#   cd snakemake
+#   snakemake generate_paper_results approx_error_bound_all approx_error_bound_tuned --configfile config/ablation/approx_error_vs_bound.yml -j8 --resources mem_mb=512000
+# generate_paper_results exports only the files the paper includes; approx_error_bound_all builds
+# all Figure 5 results in the pipeline folder (variants, latent-space measures, aggregate).
+#
+# Single-dataset test (use approx_error_bound_aggregate target, not generate_paper_results):
+#   snakemake --configfile config/ablation/approx_error_vs_bound.yml --config datasets_file=ablation/myocard_dataset.yml -j4 approx_error_bound_aggregate
+
+datasets_file: "datasets.yml"
+
+use_rep: "X_pca"
+n_feats: 100
+random_seed: 42
+init_strategy: "orthonormal"
+
+from_anndata:
+  n_triplets: 3
+  n_cells: 250
+
+gmm:
+  k_comps: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  component_sharing: "sample_specific"
+  min_cells: 250
+  normalize: true
+  fit_gmm_kwargs:
+    covariance_type: "full"
+    train_size: 0.5
+    k_selection_metric: "heldout_nll"
+    max_iter: 100
+
+approx_error_bound:
+  benchmark_reference:
+    enabled: false
+    configfile: "benchmark/benchmark.yml"
+    method_name: "GMM_DiagBures"
+
+  # The four setups at the weights tuned for a method of the main benchmark, trained as there
+  # (rule approx_error_bound_tuned; run after the main benchmark). One entry
+  # per reference method; the key names its output folder (tuned/<key>, downstream_tuned/<key>).
+  # For the exact reference (no MI weight), MI equals NoReg and Both equals Frobenius.
+  tuned_references:
+    diag:
+      configfile: "paper/main_benchmark.yml"
+      method_name: "GMM_DiagBures"
+      display_name: "Ours (Diag.)"
+      label: "tab:approx_error_downstream_tuned"
+    exact:
+      configfile: "paper/main_benchmark.yml"
+      method_name: "GMM_FullBures"
+      display_name: "Ours (Exact)"
+      label: "tab:approx_error_downstream_tuned_exact"
+
+  method:
+    dataset_type: "gmm"
+    ground_metric: "learned"
+
+  split:
+    n_splits: 5
+    train_size: 0.8
+
+  # Each variant is trained once per initialization (ggml_ot init_strategy): orthonormal (random
+  # orthonormal rows) and random (i.i.d. standard normal entries); the paper figures and the
+  # downstream table are written per initialization.
+  inits: [orthonormal, random]
+
+  # One common weight 0.1 for every regularizer at the benchmark's alpha 1, the same for all
+  # datasets; no early stopping (full training curve). The weight lies on the plateau of a
+  # weight sweep: 0.01-0.3 reduce the error without hurting the scRNA-seq scores, 1 collapses
+  # the map on the synthetic data.
+  train:
+    alpha: 1.0
+    n_comps: 5
+    lr: 0.05
+    max_iter: 50
+    stop_thr: null
+    verbose: false
+    plot_iter: 0
+    diag_bures_approx: true
+
+  error:
+    weight_by_component: true
+    min_distance_threshold: 1.0e-6
+    min_active_fraction: 0.25
+
+  plot:
+    dpi: 300
+    tick_step: 10
+    figsize: [6, 4]
+    title: "Approximation Error"
+    ylabel: "Average $\\Delta_{ij}(\\mathbf{A})$"
+    relative_title: "Relative Approximation Error"
+    relative_ylabel: "Average Relative $\\Delta_{ij}(\\mathbf{A})$"
+
+  variants:
+    NoReg:
+      display_name: "None"
+      train:
+        reg_type: "fro"
+        reg: 0.0
+        mi_reg: 0.0
+      style:
+        color: "#666666"
+        linestyle: "--"
+
+    Frobenius:
+      display_name: "Frobenius"
+      train:
+        reg_type: "fro"
+        reg: 0.1
+        mi_reg: 0.0
+      style:
+        color: "#E69F00"
+        linestyle: "-"
+
+    MutualInformation:
+      display_name: "Mutual Information"
+      train:
+        reg_type: "fro"
+        reg: 0.0
+        mi_reg: 0.1
+      style:
+        color: "#56B4A9"
+        linestyle: "-"
+
+    Both:
+      display_name: "Both"
+      train:
+        reg_type: "fro"
+        reg: 0.1
+        mi_reg: 0.1
+      style:
+        color: "#6C8EBF"
+        linestyle: "-"
+
+# Map faithfulness table, standard normal rows (rule approx_error_bound_long_dataset): a map from a
+# standard normal initialization starts with ||A||_F^2 ~ dD, where the weights tuned for the
+# orthonormal start barely act within 30 epochs. These maps are trained as the tuned replay (same
+# reference method, train kwargs and random state) but with these weights and max_iter, without
+# and with regularization, for every approx_error_bound.tuned_references entry. Weights 1/1 at
+# 100 epochs bring the map to the scale of the orthonormal start (checked on Kidney Injury).
+# The exact reference uses no MI weight, as in its main-benchmark tuning.
+# Top level, not under approx_error_bound: it does not affect the Figure 5 rules, whose config
+# param is the approx_error_bound section.
+approx_error_bound_long_training:
+  init: random
+  max_iter: 100
+  setups:
+    NoReg: {reg: 0.0, mi_reg: 0.0}
+    Both: {reg: 1.0, mi_reg: 1.0}
+
+# Only the files the paper includes are exported. All other Figure 5 results stay in the
+# pipeline folder approx_error_bound/ (target approx_error_bound_all): error_bound/ (Figure 5 (a)
+# for the absolute and relative error x orthonormal / standard normal / combined init, bound
+# constants), latent_measures/<measure>/ (one folder per latent-space measure), downstream/,
+# downstream_tuned/, aggregate/ and the per-dataset folders.
+paper_exports:
+  enabled: true
+  label: "approx_error_bound"
+  aggregate_files:
+    # Figure 5 (a): absolute error with the bound, orthonormal init (main text; per dataset in the appendix)
+    - source: "approx_error_bound/error_bound/grouped_approx_error_geom_log_bound_orthonormal.pdf"
+      dest: "selected/grouped_approx_error_geom_log_bound.pdf"
+    - source: "approx_error_bound/error_bound/all_datasets_approx_error_log_bound_orthonormal.pdf"
+      dest: "selected/all_datasets_approx_error_log_bound.pdf"
+    # Figure 5 (b): effective degrees of freedom of the latent dimensions (pooled correlation over
+    # all data) vs absolute error per dataset and split, each split joined to its initialization,
+    # orthonormal init
+    - source: "approx_error_bound/latent_measures"
+      path: "effective_dof/approx_error_split_arrows_orthonormal.pdf"
+      dest: "selected/effective_dof_error.pdf"
+    # Appendix tables: downstream scores with diagonal and exact distances (fixed and tuned weights)
+    - source: "approx_error_bound/downstream/downstream_table.tex"
+      dest: "appendix/approx_error_downstream.tex"
+    - source: "approx_error_bound/downstream_tuned/diag/downstream_table.tex"
+      dest: "appendix/approx_error_downstream_tuned.tex"
+    - source: "approx_error_bound/faithfulness/faithfulness_table.tex"
+      dest: "map_faithfulness.tex"

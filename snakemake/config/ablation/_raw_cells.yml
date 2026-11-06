@@ -1,0 +1,94 @@
+# Raw-cell ablation of the point-cloud baselines (appendix table on raw cells).
+# Each point-cloud method of the main table is run a second time on N = 250 raw
+# cells per patient (representation_source: raw_dataset) instead of N = 250 points sampled
+# from the patient's fitted GMM. Everything else as in main_benchmark.yml.
+#
+# Overlay on main_benchmark.yml, limited to the four scRNA-seq cohorts (the synthetic
+# datasets have no raw cells besides the GMM samples). The GMM-sampled originals are listed
+# in run_methods so the aggregate holds both variants; they are reused from the main run.
+#
+# Usage, from snakemake/ (after the main run):
+#   ../.venv/bin/snakemake --configfile config/paper/main_benchmark.yml \
+#     config/ablation/_raw_cells.yml -j8 -- generate_paper_results
+#
+# The raw_cells_table block below enables rules/raw_cells_table.smk. generate_paper_results
+# exports the appendix table to generated_tables/appendix/raw_cells_table.tex.
+
+run_datasets: [COVID, kidney, breastcancer, myocardial_infarction]
+
+run_methods:
+  [Empirical_euclidean, Empirical_cosine, Empirical_sinkhorn, FDA, WDA, Empirical_GML,
+   Empirical_euclidean_raw, Empirical_cosine_raw, Empirical_sinkhorn_raw, FDA_raw, WDA_raw,
+   Empirical_GML_raw]
+
+methods:
+  Empirical_euclidean_raw:
+    dataset_type: empirical
+    representation_source: raw_dataset
+    ground_metric: euclidean
+    display_name: "Wasserstein ($L_2$, raw cells)"
+    main_table: false
+    train_test: {}
+
+  Empirical_cosine_raw:
+    dataset_type: empirical
+    representation_source: raw_dataset
+    ground_metric: cosine
+    display_name: "Wasserstein (Cosine, raw cells)"
+    main_table: false
+    train_test: {}
+
+  Empirical_sinkhorn_raw:
+    dataset_type: empirical
+    representation_source: raw_dataset
+    ground_metric: euclidean
+    display_name: "Sinkhorn ($L_2$, raw cells)"
+    main_table: false
+    train_test:
+      entropic_reg: 1.0
+
+  FDA_raw:
+    dataset_type: empirical
+    representation_source: raw_dataset
+    display_name: "FDA (raw cells)"
+    external: fda
+    main_table: false
+
+  WDA_raw:
+    dataset_type: empirical
+    representation_source: raw_dataset
+    display_name: "WDA (raw cells)"
+    external: wda
+    main_table: false
+
+  Empirical_GML_raw:
+    dataset_type: empirical
+    representation_source: raw_dataset
+    ground_metric: learned
+    tune_enabled: false
+    display_name: "GGML (raw cells)"
+    main_table: false
+    train_test:
+      alpha: 1.0
+      reg: 0.001
+      stop_thr: null
+
+# Appendix table: each point-cloud method on GMM-sampled points (sampled) and on raw cells (raw).
+raw_cells_table:
+  datasets: [COVID, kidney, breastcancer, myocardial_infarction]
+  rows:
+    - {label: "Wasserstein ($L_2$)", sampled: Empirical_euclidean, raw: Empirical_euclidean_raw}
+    - {label: "Wasserstein (Cosine)", sampled: Empirical_cosine, raw: Empirical_cosine_raw}
+    - {label: "Sinkhorn ($L_2$)", sampled: Empirical_sinkhorn, raw: Empirical_sinkhorn_raw}
+    - {label: "FDA", sampled: FDA, raw: FDA_raw}
+    - {label: "WDA", sampled: WDA, raw: WDA_raw}
+    - {label: "GGML", sampled: Empirical_GML, raw: Empirical_GML_raw}
+
+paper_exports:
+  manifest_root: "../data/generated_plots/_export_manifests/raw_cells_ablation/"
+  aggregate_files:
+    - source: "raw_cells/raw_cells_table.tex"
+      dest: "appendix/raw_cells_table.tex"
+  dataset_files: []
+  benchmark_plot_dirs: []
+  tune_files: []

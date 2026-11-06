@@ -1,0 +1,7 @@
+# Matplotlib settings for all pipeline and notebook figures.
+# Loaded by snakemake/Snakefile (MATPLOTLIBRC) and notebooks/_utils/__init__.py.
+
+# Embed fonts as TrueType (Type 42) instead of Type 3: NeurIPS accepts only Type 1 or
+# embedded TrueType fonts in the paper PDF.
+pdf.fonttype: 42
+ps.fonttype: 42

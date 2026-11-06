@@ -1,0 +1,84 @@
+# Datasets of the paper. Real cohorts are CELLxGENE files (`id`), downloaded by the pipeline;
+# the *_col keys name the label, patient and cell-type columns. Synthetic datasets are
+# generated from the `synth` parameters.
+datasets:
+
+  kidney:
+    id: "1c360b0b-eb2f-45a3-aba9-056026b39fa5.h5ad"
+    label_col: "disease"
+    patient_col: "donor_id"
+    cell_subtype_col: "subclass.l1"
+
+  COVID:
+    id: "e6b93598-7ae3-47d6-b971-d3c6d9162175.h5ad"
+    label_col: "disease"
+    patient_col: "donor_id"
+    cell_subtype_col: "initial_clustering"
+
+  breastcancer:
+    id: "b8b5be07-061b-4390-af0a-f9ced877a068.h5ad"
+    label_col: "reported_diseases"
+    patient_col: "donor_id"
+    cell_subtype_col: "broad_cell_type"
+
+  myocardial_infarction:
+    id: "c1f6034b-7973-45e1-85e7-16933d0550bc.h5ad"
+    label_col: "patient_group"
+    patient_col: "sample"
+    cell_subtype_col: "cell_type"
+
+  # Synth GMM with mean and covariance shifts
+  synth_recovery2_jitter:
+    source: synthetic_gmm
+    patient_col: "sample"
+    label_col: "patient_group"
+    cell_subtype_col: "mode_name"
+    synthetic:
+      gmm_source: "ground_truth"
+    synth:
+      n_dim: 20
+      n_patients: 40
+      n_samples: 300
+      signal_mass_ratio: 0.35
+      n_modes: 10
+      signal_means_offset: 10.5
+      signal_means_jitter: 1.50
+      noise_means_offset: 7.5
+      noise_means_jitter: 1.50
+      signal_weight_concentration: 25.0
+      noise_weight_concentration: 2.5
+      signal_mean_shift: 1.0
+      signal_cov_scale: 1.4
+      signal_anisotropy: 20.0
+      cov_rotation_jitter: 25.0
+      cov_scale_jitter: 0.35
+      global_rotation: 30.0
+      random_seed: 203
+
+  # Synth GMM with only covariance shifts
+  synth_recovery2_jitter_onlycov:
+    source: synthetic_gmm
+    patient_col: "sample"
+    label_col: "patient_group"
+    cell_subtype_col: "mode_name"
+    synthetic:
+      gmm_source: "ground_truth"
+    synth:
+      n_dim: 20
+      n_patients: 40
+      n_samples: 300
+      signal_mass_ratio: 0.35
+      n_modes: 10
+      signal_means_offset: 10.5
+      signal_means_jitter: 1.50
+      noise_means_offset: 7.5
+      noise_means_jitter: 1.50
+      signal_weight_concentration: 25.0
+      noise_weight_concentration: 2.5
+      signal_mean_shift: 0.0
+      signal_cov_scale: 1.4
+      signal_anisotropy: 20.0
+      cov_rotation_jitter: 25.0
+      cov_scale_jitter: 0.35
+      global_rotation: 30.0
+      random_seed: 203

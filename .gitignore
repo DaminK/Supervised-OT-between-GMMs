@@ -1,0 +1,23 @@
+# Datasets
+*.h5ad
+*.pth
+
+# Python
+*.pyc
+__pycache__/
+.venv
+.venv_gmvae
+
+# Snakemake artifacts
+**/.snakemake/
+*.snakemake.log
+snakemake/log/
+snakemake/logs/
+*.pkl
+
+# Pipeline intermediate outputs and final results are kept untracked
+data/snakemake/
+data/generated_plots/*
+!data/generated_plots/.gitkeep
+data/generated_tables/*
+!data/generated_tables/.gitkeep

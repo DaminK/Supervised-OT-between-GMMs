@@ -1,0 +1,113 @@
+# Default configuration of the pipeline.
+#
+# Loaded automatically by the Snakefile. The paper configs (config/paper/, config/ablation/)
+# override specific keys; with several --configfile arguments, later files win per key.
+#
+# Usage:
+#   cd snakemake
+#   snakemake --configfile config/paper/main_benchmark.yml -j8 -- generate_paper_results
+
+# ── Paths ───────────────────────────────────────────────────────────────────
+data_root: "../data/snakemake"
+datasets_file: "datasets.yml"   # override with --config datasets_file=ablation/myocard_dataset.yml
+
+# ── Representation ──────────────────────────────────────────────────────────
+use_rep: "X_pca"
+n_feats: 100
+
+# ── Preprocessing ───────────────────────────────────────────────────────────
+# log1p_pca is the preprocessing used in the paper. Other supported modes:
+#   log1p_hvg_scale_pca: normalize/log1p, select HVGs, gene z-score/clip, PCA
+#   log1p_regress_pca: normalize/log1p, regress dataset-declared QC covariates, scale, PCA
+#   pearson_residual_pca: analytic Pearson residuals, PCA
+preprocess:
+  mode: "log1p_pca"
+  regress_out: []
+  n_hvg: 5000
+  scale_max_value: 10
+
+# ── Dataset construction (ggml_ot.from_anndata kwargs) ──────────────────────
+from_anndata:
+  n_triplets: 3
+  n_cells: 250
+
+# ── GMM fitting (dataset.fit_gmm kwargs) ────────────────────────────────────
+gmm:
+  k_comps: [15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+  component_sharing: "sample_specific"
+  min_cells: 250
+  # Legacy dataset-level normalization; AnnData-backed GMM fits read adata directly.
+  normalize: false
+  # "max_trace" applies one post-fit scalar so the largest active covariance trace equals trace_bound.
+  output_scale: "none"
+  trace_bound: "n_feats"
+  fit_gmm_kwargs:
+    covariance_type: "full"
+    train_size: 0.5
+    k_selection_metric: "heldout_nll"
+    max_iter: 100
+
+# ── Training defaults (ggml_ot.train_test kwargs) ──────────────────────────
+train_test:
+  alpha: 10.0
+  reg: 0.001
+  reg_type: "fro"
+  n_comps: 5
+  knn_k: 5
+  max_iter: 20
+  n_splits: 5
+  train_size: 0.8
+  verbose: false
+  plot_split: false
+  print_table: false
+  plot_iter: 0
+  lr: 0.05
+  stop_thr: 1.0e-6
+  scoring: ["knn", "ari", "mi","vi"]
+
+# ── Tuning defaults ─────────────────────────────────────────────────────────
+tune:
+  enabled: false
+  alpha: [0.1,1,10]
+  reg: [0.001, 0.01, 0.1, 1.0]
+  reg_type: ["fro"]
+  n_comps: [5]
+  knn_k: 5
+  mi_reg: [0]
+  max_iter: 20
+  n_splits: 2
+  train_size: 0.8
+  verbose: false
+  plot_contour: false
+
+# ── Operational / cluster settings ──────────────────────────────────────────
+n_threads: 4
+training_device: "cpu"   # "cpu" | "cuda:0" | ...
+random_seed: 42
+
+# ── Plot artifact outputs ───────────────────────────────────────────────────
+benchmark_plots:
+  enabled: true
+  types: ["clustermap", "embedding"]
+  format: "pdf"
+  dpi: 150
+
+tune_plots:
+  enabled: true
+  x: null
+  y: null
+  fixed_params: {}
+  value_col: ["knn", "mean"]
+  levels: 20
+  log_axis: "auto"
+  format: "pdf"
+  dpi: 150
+
+resources:
+  download:   {mem_mb: 8000}
+  preprocess: {mem_mb: 64000}
+  gmm:        {mem_mb: 128000}
+  tune:       {mem_mb: 128000}
+  benchmark:  {mem_mb: 64000}
+  significance: {mem_mb: 8000}
+  plot:       {mem_mb: 16000}

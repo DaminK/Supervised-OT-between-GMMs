@@ -1,0 +1,263 @@
+"""
+Snakemake pipeline of the paper's benchmark and analyses.
+
+Usage, from snakemake/ (config/defaults.yml is loaded automatically):
+
+    snakemake --configfile config/paper/main_benchmark.yml -j8 -- generate_paper_results
+
+Further analyses add an overlay config, e.g. config/paper/pilot_gmvae.yml after the main
+config. A different dataset file can be selected with --config datasets_file=<file in config/>.
+
+Target rules:
+  all             — full pipeline (benchmark + plots)
+  benchmark_only  — run up to benchmark step (no plotting)
+  preprocess_only — download + preprocess only
+  gmm_only        — up to GMM fitting
+  tune_only       — up to hyperparameter tuning
+  distance_agreement_only — exact vs diagonal Bures patient-distance agreement
+  runtime_table_only — end-to-end runtime table from the jobs' timing files
+  scrna_baselines_table_only — scRNA baselines table, built and exported (run after the GM-VAE overlay)
+  paired_tests_only — paired Wilcoxon + LMM tests with Holm correction
+  patient_component_stability_only — per-patient number-of-components check (overlay ablation/_component_stability.yml)
+  generate_paper_results — build and copy the configured paper-ready outputs
+"""
+
+import sys
+import yaml
+from pathlib import Path
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Load defaults automatically (experiment configs override via --configfile)
+# ─────────────────────────────────────────────────────────────────────────────
+
+configfile: "config/defaults.yml"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Path setup
+# ─────────────────────────────────────────────────────────────────────────────
+
+SNAKEMAKE_DIR = Path(workflow.basedir)
+REPO_ROOT = SNAKEMAKE_DIR.parent
+
+# Make scripts/ importable at Snakefile level
+if str(SNAKEMAKE_DIR) not in sys.path:
+    sys.path.insert(0, str(SNAKEMAKE_DIR))
+
+import os
+os.environ["OPENBLAS_NUM_THREADS"] = str(config.get("n_threads", 64))
+# Matplotlib settings of every script (TrueType fonts in PDFs, see config/matplotlibrc)
+os.environ["MATPLOTLIBRC"] = str(SNAKEMAKE_DIR / "config" / "matplotlibrc")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Load datasets from separate file (replaceable via --config datasets_file=...)
+# ─────────────────────────────────────────────────────────────────────────────
+
+from scripts._utils import get_aggregate_experiment_label, is_tunable_method
+
+_datasets_file = SNAKEMAKE_DIR / "config" / config.get("datasets_file", "datasets.yml")
+with open(_datasets_file) as _f:
+    config["datasets"] = yaml.safe_load(_f)["datasets"]
+
+# ``run_datasets`` restricts the run to a subset of the datasets file, as
+# ``run_methods`` does for methods, without copying dataset entries into another
+# file. Omitted (the default) means all datasets, leaving every path unchanged.
+_RUN_DATASETS = config.get("run_datasets")
+if _RUN_DATASETS:
+    _unknown = [d for d in _RUN_DATASETS if d not in config["datasets"]]
+    if _unknown:
+        raise ValueError(f"run_datasets lists datasets absent from {_datasets_file.name}: {sorted(_unknown)}")
+    config["datasets"] = {d: meta for d, meta in config["datasets"].items() if d in set(_RUN_DATASETS)}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Derived globals (used in rules as constants or expand targets)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_data_root_cfg = Path(config.get("data_root", "../data/snakemake"))
+if not _data_root_cfg.is_absolute():
+    _data_root_cfg = SNAKEMAKE_DIR / _data_root_cfg
+DATA_ROOT = _data_root_cfg.resolve()
+
+USE_REP = config.get("use_rep", "X_pca")
+N_FEATS = config.get("n_feats", 50)
+
+AGGREGATE_LABEL = get_aggregate_experiment_label(config, config["datasets"])
+
+# ``run_methods`` restricts the run to a subset of ``methods`` without deleting
+# the others, so an ablation overlay can vary one protocol setting and benchmark
+# only the methods it compares. Omitted (the default) means "all methods", which
+# leaves the derived lists byte-identical to the unfiltered ones — this key can
+# therefore be introduced without invalidating any cached output.
+# Config order is preserved, so table/plot ordering stays deterministic.
+_CONFIGURED_METHODS = list(config.get("methods", {}).keys())
+_RUN_METHODS = config.get("run_methods")
+if _RUN_METHODS:
+    _unknown = [m for m in _RUN_METHODS if m not in _CONFIGURED_METHODS]
+    if _unknown:
+        raise ValueError(
+            f"run_methods lists methods absent from 'methods': {sorted(_unknown)}"
+        )
+    _selected = set(_RUN_METHODS)
+    ALL_METHODS = [m for m in _CONFIGURED_METHODS if m in _selected]
+else:
+    ALL_METHODS = list(_CONFIGURED_METHODS)
+
+TUNABLE_METHODS = [m for m in ALL_METHODS if is_tunable_method(config["methods"][m])]
+GMM_METHODS = [
+    m for m in ALL_METHODS if config["methods"][m].get("dataset_type") == "gmm"
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Include rule modules (AFTER globals are defined)
+# ─────────────────────────────────────────────────────────────────────────────
+
+include: "rules/common.smk"
+include: "rules/download.smk"
+include: "rules/preprocess.smk"
+include: "rules/synthetic.smk"
+include: "rules/gmm.smk"
+include: "rules/gmvae.smk"
+include: "rules/tune.smk"
+include: "rules/benchmark.smk"
+include: "rules/plot.smk"
+include: "rules/approx_error_bound.smk"
+include: "rules/export.smk"
+include: "rules/component_stability.smk"
+include: "rules/distance_agreement.smk"
+include: "rules/scrna_baselines_table.smk"
+include: "rules/paired_tests.smk"
+include: "rules/runtime_table.smk"
+include: "rules/raw_cells_table.smk"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Target rules
+# ─────────────────────────────────────────────────────────────────────────────
+
+rule all:
+    """Default target: run full pipeline (benchmark + plots)."""
+    input:
+        [aggregate_output_path(f"benchmark_table_{g}.tex") for g in DATASET_GROUPS],
+        [aggregate_output_path(f"pareto_plot_{g}.pdf") for g in DATASET_GROUPS],
+        aggregate_output_path("datasets_table.tex"),
+        aggregate_output_path("gmm_holdout_nll_summary.tex"),
+        aggregate_output_path("gmm_holdout_nll_boxplot.pdf"),
+        aggregate_output_path("train_time_vs_patients.pdf"),
+        aggregate_output_path("train_time_vs_patients_log.pdf"),
+        aggregate_output_path("ot_time_vs_patients.pdf"),
+        aggregate_output_path("ot_time_vs_patients_log.pdf"),
+        aggregate_output_path("time_vs_patients_panel.pdf"),
+        aggregate_output_path("time_vs_patients_panel_log.pdf"),
+        [dataset_plot_path(dataset, "table.tex") for dataset in config["datasets"]],
+        [dataset_plot_path(dataset, "benchmark_table.tex") for dataset in config["datasets"]],
+        [dataset_plot_path(dataset, "pareto_plot.pdf") for dataset in config["datasets"]],
+        PAPER_EXPORT_TARGETS,
+        [distance_agreement_path("distance_agreement.tex")] if DISTANCE_AGREEMENT_ENABLED else [],
+        [paired_tests_path(f"paired_tests_{g}.tex") for g in DATASET_GROUPS] if PAIRED_TESTS_ENABLED else [],
+
+
+rule benchmark_only:
+    """Run up to benchmark step (no plotting)."""
+    input:
+        [
+            bench_path(dataset, method_name, "scores.csv")
+            for dataset in config["datasets"]
+            for method_name in ALL_METHODS
+        ]
+
+
+rule preprocess_only:
+    """Run only dataset preparation steps."""
+    input:
+        [prepared_path(dataset) for dataset in config["datasets"]]
+
+
+rule gmm_only:
+    """Run up to GMM fitting."""
+    input:
+        [gmm_path(dataset) for dataset in config["datasets"]]
+
+
+rule tune_only:
+    """Run up to hyperparameter tuning."""
+    input:
+        [
+            tune_path(dataset, method_name, "best_params.json")
+            for dataset in config["datasets"]
+            for method_name in TUNABLE_METHODS
+        ]
+
+
+rule distance_agreement_only:
+    """Exact vs diagonal Bures patient-distance agreement (reads the benchmark's trained metrics)."""
+    input:
+        distance_agreement_path("distance_agreement.tex")
+
+
+rule runtime_table_only:
+    """Runtime table of the main benchmark's jobs (reads their timing files)."""
+    input:
+        runtime_table_path("runtime_table.tex")
+
+
+rule scrna_baselines_table_only:
+    """scRNA baselines vs our metric on the same representation, built and exported. Not part of
+    all: its GM-VAE rows come from config/paper/pilot_gmvae.yml, so run it after that overlay."""
+    input:
+        SCRNA_BASELINES_EXPORT,
+        SCRNA_BASELINES_PER_DATASET_EXPORT,
+
+
+rule paired_tests_only:
+    """Paired Wilcoxon + LMM tests with Holm correction, for every dataset group."""
+    input:
+        [paired_tests_path(f"paired_tests_{g}.tex") for g in DATASET_GROUPS]
+
+
+rule generate_paper_results:
+    """Build and copy the configured paper-ready output subset."""
+    input:
+        PAPER_EXPORT_TARGETS
+
+
+rule patient_component_stability_only:
+    """Per-patient number-of-components check (appendix, GMM fitting)."""
+    input:
+        pcs_output_path("component_count_patient_accuracy.csv"),
+        pcs_output_path("component_count_associations.csv"),
+        pcs_output_path("component_count_stability.pdf"),
+        pcs_output_path("component_count_stability.tex")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Workflow lifecycle hooks
+# ─────────────────────────────────────────────────────────────────────────────
+
+onstart:
+    print(f"\n{'='*60}")
+    print("GGML-OT Snakemake Pipeline")
+    print(f"{'='*60}")
+    print(f"Data root:   {DATA_ROOT}")
+    print(f"Datasets:    {list(config['datasets'].keys())}")
+    print(f"AnnData Repr:{'':1}{USE_REP}_{N_FEATS}")
+    print(f"Aggregate:   {AGGREGATE_LABEL}")
+    print(f"Methods:     {ALL_METHODS}")
+    print(f"Tunable:     {TUNABLE_METHODS}")
+    print(f"Device:      {config.get('training_device', 'cpu')}")
+    print(f"{'='*60}\n")
+
+
+onsuccess:
+    print(f"\n{'='*60}")
+    print("Pipeline completed successfully!")
+    if config.get("paper_exports", {}).get("enabled", False):
+        print(f"Generated plots:   {_paper_export_plots_root()}")
+        print(f"Generated tables:  {_paper_export_tables_root()}")
+        print(f"Native results:    {DATA_ROOT / 'plots'}")
+    else:
+        print(f"Results in:  {DATA_ROOT / 'plots'}")
+    print(f"{'='*60}\n")
+
+
+onerror:
+    print(f"\n{'='*60}")
+    print("Pipeline failed! Check logs for details.")
+    print(f"{'='*60}\n")

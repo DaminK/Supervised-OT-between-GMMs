@@ -1,0 +1,87 @@
+# GMM-fitting sensitivity on Myocardial Infarction (appendix, tab:gmm_sensitivity).
+#
+# Base config of the two sweeps in scripts/gmm_sensitivity/: the number of components k
+# (sweep_fixed_k.sh) and covariance type, PCA dimension and covariance floor eps
+# (sweep_gmm_sensitivity.sh). Each sweep changes one setting of this config per run.
+# Standalone config, not an overlay on main_benchmark.yml.
+#
+# Design:
+#   - One cohort (myocardial_infarction: 29 patients, ~192k cells).
+#   - Our two methods only (Ours (Exact), Ours (Diag.)).
+#   - Tuning off and hyperparameters fixed, so the GMM setting is the only variable
+#     (retuning per setting would confound it with hyperparameter selection).
+#   - k is set by gmm.k_comps = [k] (a single value forces exactly k per patient);
+#     the sweep overwrites it per run, the value here is the reference fit.
+#
+# Run, from snakemake/:
+#   bash scripts/gmm_sensitivity/sweep_fixed_k.sh "5 8 10 12 15"
+#   bash scripts/gmm_sensitivity/sweep_gmm_sensitivity.sh
+
+datasets_file: "ablation/myocard_dataset.yml"
+
+use_rep: "X_pca"
+n_feats: 100
+random_seed: 42
+
+preprocess:
+  mode: "log1p_pca"
+
+from_anndata:
+  n_triplets: 3
+  n_cells: 250
+
+gmm:
+  # SINGLE value => fixed k for every patient. Overwritten per run by sweep_fixed_k.sh.
+  k_comps: [10]
+  component_sharing: "sample_specific"
+  min_cells: 250
+  normalize: true
+  fit_gmm_kwargs:
+    covariance_type: "full"
+    train_size: 0.5
+    k_selection_metric: "heldout_nll"
+    max_iter: 100
+
+train_test:
+  alpha: 1.0
+  reg: 0.001
+  reg_type: "fro"
+  n_comps: 5
+  knn_k: 5
+  max_iter: 30
+  n_splits: 5
+  train_size: 0.8
+  lr: 0.05
+  cluster_linkage: "average"
+  verbose: false
+  plot_split: false
+  print_table: false
+  plot_iter: 0
+
+# Tuning off: fixed hyperparameters across all settings (see design note above).
+tune:
+  enabled: false
+
+methods:
+  GMM_FullBures:
+    dataset_type: gmm
+    ground_metric: learned
+    display_name: "Ours (Exact)"
+    tune_enabled: false
+    train_test:
+      diag_bures_approx: false
+      mi_reg: 0.0
+      reg: 0.001
+
+  GMM_DiagBures:
+    dataset_type: gmm
+    ground_metric: learned
+    display_name: "Ours (Diag.)"
+    tune_enabled: false
+    train_test:
+      diag_bures_approx: true
+      mi_reg: 0.0001
+      reg: 0.001
+
+# No paper_exports: the sweeps run benchmark_only, which writes method-hash-isolated
+# scores.csv and never touches the shared plot/aggregate/export tree.

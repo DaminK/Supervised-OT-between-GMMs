@@ -1,0 +1,125 @@
+# Full hyperparameter sweep for one dataset (myocardial_infarction).
+# Sweeps all four hyperparameters: alpha, n_comps (d), reg (λ_F), mi_reg (λ_MI).
+# Generates the detailed contour grid for all hyperparameter pairs, plus
+# best-over-regularization line plots versus latent dimension.
+#
+# Intended command:
+#   cd snakemake
+#   snakemake --configfile config/ablation/full_hyperparameter_sweep.yml -j8 generate_paper_results
+
+datasets_file: "ablation/myocard_dataset.yml"
+
+use_rep: "X_pca"
+n_feats: 100
+random_seed: 42
+
+from_anndata:
+  n_triplets: 3
+  n_cells: 250
+
+gmm:
+  k_comps: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  component_sharing: "sample_specific"
+  min_cells: 250
+  normalize: true
+  fit_gmm_kwargs:
+    covariance_type: "full"
+    train_size: 0.5
+    k_selection_metric: "heldout_nll"
+    max_iter: 100
+
+train_test:
+  alpha: 10
+  reg_type: "fro"
+  max_iter: 30
+  n_splits: 5
+  lr: 0.05
+
+tune:
+  enabled: true
+  alpha: [0.1, 1, 10]
+  reg: [0.0001, 0.001, 0.01, 0.1, 1, 10]
+  reg_type: ["fro"]
+  n_comps: [2, 5, 10, 15, 20]
+  mi_reg: [0.0001, 0.001, 0.01, 0.1, 1, 10]
+  max_iter: 30
+  n_splits: 3
+  lr: 0.05
+
+tune_plots:
+  enabled: true
+  # x/y omitted: generates all 2D pairs automatically
+  fixed_params: {}
+  value_col: ["knn", "mean"]
+  levels: 20
+  log_axis: "auto"
+  format: "pdf"
+  dpi: 300
+
+latent_dim_ablation_plot:
+  enabled: true
+  dataset: "myocardial_infarction"
+  method: "GMM_DiagBures"
+  output_dir: "latent_dim_ablation"
+  summary_csv: "best_by_n_comps.csv"
+  x_param: "n_comps"
+  x_label: "Latent dimension $d$"
+  selection_metric: "knn"
+  selection_stat: "mean"
+  tie_break_metric: "epoch_time(s)"
+  tie_break_stat: "mean"
+  accuracy_plot: "knn_acc_vs_n_comps.pdf"
+  accuracy_title: "Best $k$-NN Accuracy vs Latent Dimension"
+  accuracy_ylabel: "$k$-NN accuracy"
+  train_time_plot: "train_time_vs_n_comps.pdf"
+  train_time_title: "Training Time vs Latent Dimension"
+  train_time_ylabel: "Train time (s)"
+  figsize: [6, 4]
+  dpi: 300
+
+
+methods:
+  GMM_DiagBures:
+    dataset_type: gmm
+    ground_metric: learned
+    display_name: "Ours (Diagonal + MI)"
+    train_test:
+      diag_bures_approx: true
+      mi_reg: 0.01
+    tune:
+      diag_bures_approx: true
+
+
+paper_exports:
+  enabled: true
+  label: "full_hyperparam_sweep"
+  plots_root: "../data/generated_plots"
+  aggregate_files:
+    - source: "latent_dim_ablation/knn_acc_vs_n_comps.pdf"
+      dest: "appendix/latent_dim/knn_acc_vs_n_comps.pdf"
+    - source: "latent_dim_ablation/train_time_vs_n_comps.pdf"
+      dest: "appendix/latent_dim/train_time_vs_n_comps.pdf"
+  tune_files:
+    # λ_F vs λ_MI contour (hyperparameter sensitivity)
+    - dataset: "myocardial_infarction"
+      method: "GMM_DiagBures"
+      source: "reg_vs_mi_reg/contour_reg_vs_mi_reg.pdf"
+      dest: "hyperparameter_sensitivity/contour_reg_vs_mi_reg.pdf"
+    # Appendix: d vs regularization contours
+    - dataset: "myocardial_infarction"
+      method: "GMM_DiagBures"
+      source: "n_comps_vs_reg/contour_n_comps_vs_reg.pdf"
+      dest: "appendix/latent_dim/contour_d_vs_lambda_F.pdf"
+    - dataset: "myocardial_infarction"
+      method: "GMM_DiagBures"
+      source: "n_comps_vs_mi_reg/contour_n_comps_vs_mi_reg.pdf"
+      dest: "appendix/latent_dim/contour_d_vs_lambda_MI.pdf"
+    # Appendix: detailed α contours (myocardial only)
+    - dataset: "myocardial_infarction"
+      method: "GMM_DiagBures"
+      source: "alpha_vs_reg/contour_alpha_vs_reg.pdf"
+      dest: "appendix/tuning/myocardial_alpha_vs_reg.pdf"
+    - dataset: "myocardial_infarction"
+      method: "GMM_DiagBures"
+      source: "alpha_vs_mi_reg/contour_alpha_vs_mi_reg.pdf"
+      dest: "appendix/tuning/myocardial_alpha_vs_mi_reg.pdf"

@@ -1,0 +1,36 @@
+# Versions of the environment that produced the paper results. Python 3.11 (reference: 3.11.4).
+
+ggml-ot==0.10.0a1
+
+# Requirements of ggml-ot. Newer numpy, scikit-learn and torch change the results.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0+cpu
+numpy==2.4.4
+scipy==1.17.1
+scikit-learn==1.8.0
+POT==0.9.6.post1
+pandas==2.3.3
+anndata==0.11.4
+scanpy==1.11.5
+umap-learn==0.5.12
+igraph==0.11.9
+pydiffmap==0.2.0.1
+tbb==2023.2.0
+matplotlib==3.10.9
+seaborn==0.13.2
+ipython==9.18.1
+gprofiler-official==1.0.0
+requests==2.34.2
+tqdm==4.70.1
+
+# Pipeline requirements
+snakemake==8.30.0
+pyyaml==6.0.3
+autograd==1.9.1
+pymanopt==2.2.1
+decoupler==2.2.0
+statsmodels==0.14.6
+
+# Notebooks
+ipykernel==7.4.0
+ipywidgets==8.1.9

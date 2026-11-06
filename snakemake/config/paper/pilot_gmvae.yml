@@ -1,0 +1,37 @@
+# PILOT-GM-VAE representation for the scRNA baselines table (Table 2).
+#
+# Overlay on main_benchmark.yml: the per-patient GMMs come from PILOT-GM-VAE's GM-VAE
+# instead of EM (gmm.provider: gmvae, rule fit_gmm_gmvae). Splits, seeds, tuning grids and
+# both linkages are inherited. Only the methods of the representation table run, on the
+# four scRNA cohorts. GMMs, tuning, benchmark results and per-dataset tables all get their
+# own paths, so no output of the main run is touched.
+#
+# Usage, from snakemake/:
+#   ../.venv/bin/snakemake --configfile config/paper/main_benchmark.yml \
+#     config/paper/pilot_gmvae.yml -j8 -- benchmark_only
+#
+# The GM-VAE runs in an isolated environment with pilotgm==0.1.1 (`make setup-gmvae-env`);
+# venv_python is relative to snakemake/.
+
+run_datasets: [kidney, COVID, breastcancer, myocardial_infarction]
+
+# Fixed full Bures-Wasserstein (= PILOT-GM-VAE's metric) and our metric, mean-only and full.
+run_methods: [GMM_euclidean, GMM_means_only, GMM_FullBures, GMM_DiagBures]
+
+# GM-VAE settings of the PILOT-GM-VAE paper (Joodaki et al., Brief. Bioinform. 26(5),
+# bbaf547, 2025): "the number of mixture components is set to the number of cell types in
+# the data", "The latent space z is a 50D vector", "The batch size is set to 32",
+# "50 epochs for training". Their breast cancer tutorial differs (100 epochs) and is not
+# followed here. Learning rate, train/validation split and loss weights are the package
+# defaults, which match the paper.
+gmm:
+  provider: gmvae
+  gmvae:
+    venv_python: "../.venv_gmvae/bin/python"
+    num_components: cell_types
+    gaussian_size: 50
+    epochs: 50
+    batch_size: 32
+
+paper_exports:
+  enabled: false
